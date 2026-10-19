@@ -47,6 +47,7 @@ jobs:
           python-version: "3.12"
       - run: pip install pyyaml
       - run: python tools/lint_skills.py
+      - run: python tools/lint_opencode.py
       - name: Framework version guard (upstream template only)
         if: github.repository == 'MadsLorentzen/ai-job-search'
         run: python tools/check_framework_version.py

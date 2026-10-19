@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["CLAUDE.md"],
+  "skills": [".claude/skills"],
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "bun run .agents/skills/jobbank-search/cli/src/cli.ts*": "allow",
+      "bun run .agents/skills/jobdanmark-search/cli/src/cli.ts*": "allow",
+      "bun run .agents/skills/jobindex-search/cli/src/cli.ts*": "allow",
+      "bun run .agents/skills/jobnet-search/cli/src/cli.ts*": "allow",
+      "bun run .agents/skills/linkedin-search/cli/src/cli.ts*": "allow",
+      "bun run .agents/skills/freehire-search/cli/src/cli.ts*": "allow",
+      "python salary_lookup.py*": "allow",
+      "python3 salary_lookup.py*": "allow",
+      "python tools/rank_state.py*": "allow",
+      "python3 tools/rank_state.py*": "allow",
+      "python tools/job_key.py*": "allow",
+      "python3 tools/job_key.py*": "allow",
+      "python tools/verify_pdf.py*": "allow",
+      "python3 tools/verify_pdf.py*": "allow",
+      "python tools/verify_layout.py*": "allow",
+      "python3 tools/verify_layout.py*": "allow",
+      "pdftotext*": "allow"
+    }
+  }
+}

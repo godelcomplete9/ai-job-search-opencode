@@ -15,6 +15,16 @@ per-file diff commands.
 
 ### Added
 
+- **opencode is wired as a first-class runtime - `opencode.json`, thin loaders, and `OPENCODE.md`**
+  (`opencode.json`, `.opencode/command/*.md`, `.opencode/agent/gemini-research-expert.md`,
+  `OPENCODE.md`, `AGENTS.md`, `tools/lint_opencode.py`, `tests/test_lint_opencode.py`) - the
+  canonical `.claude/` files stay the only source of truth while opencode gets a thin translation
+  layer: a config that loads `CLAUDE.md` and `.claude/skills` and mirrors the Claude Code bash
+  allowlist, one thin slash-command loader per canonical command (14), a subagent loader, and a
+  Claude Code -> opencode tool mapping table in `AGENTS.md`. `OPENCODE.md` documents setup, the
+  Notion MCP path, and the features with no opencode equivalent (hosted Gmail connector, skill
+  `allowed-tools` scoping, `context: fork`).
+
 - **One cross-platform command installs every portal CLI: `python3 tools/install_portal_clis.py`**
   (#540, `README.md` quick start step 2, `SETUP.md` section 3,
   `tests/test_install_portal_clis.py`) - the README and SETUP.md each carried a PowerShell and a
@@ -28,6 +38,14 @@ per-file diff commands.
   carrying one is read before it runs. `--dry-run` lists what it would install.
 
 ### Changed
+
+- **CI and contributor docs guard the opencode wiring like the Claude Code side**
+  (`tools/security_guards.py`, `.github/workflows/ci.yml`, `CONTRIBUTING.md`,
+  `.github/PULL_REQUEST_TEMPLATE.md`, `tests/test_security_guards.py`, `README.md`, `SETUP.md`) -
+  the lint job now fails if a canonical command lacks a loader, a loader stops pointing at its
+  spec, or a skill is copied into `.opencode/`; `security_guards.py` audits `opencode.json` for
+  un-reviewed bash allow patterns, plugins, and MCP servers the same way it audits
+  `.claude/settings.json`, with test fixtures for both runtimes' configs.
 
 - **`/apply` and `/rank` route matching portal URLs to installed CLI `detail` before `WebFetch`**
   (#535, `.claude/commands/apply.md` Step 0, `.claude/commands/rank.md` Step 2,

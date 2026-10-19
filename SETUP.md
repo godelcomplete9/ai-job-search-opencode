@@ -14,6 +14,10 @@ npm install -g @anthropic-ai/claude-code
 
 You'll need an Anthropic API key or a Claude Pro/Team subscription. See the [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) for details.
 
+### opencode (alternative runtime)
+
+[opencode](https://opencode.ai) runs the same workflow from the same canonical files via the thin wiring shipped in this fork (`opencode.json`, `.opencode/` loaders). Install opencode per the [opencode docs](https://opencode.ai/docs), then run `opencode` in the repo root instead of `claude` - all commands (`/setup`, `/scrape`, `/apply`, ...) work the same. See [OPENCODE.md](OPENCODE.md) for the config reference, the Notion setup, and the short list of features that only exist on Claude Code (hosted Gmail connector, skill tool scoping).
+
 ### Python
 
 Python 3.10+ is required for the salary lookup tool. Check with:

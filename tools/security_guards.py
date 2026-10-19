@@ -11,7 +11,7 @@ reviewable rather than buried.
 
 Checks:
 1. .claude/settings.json — every permissions.allow entry must be in the exact
-   allowlist below. Catches permission widening (e.g. Bash(*), Bash(curl:*)),
+   allowlist below. Catches permission widening (e.g. Bash(*), Bash(curl:*)).
    which would auto-approve commands on every fork. The same file's `hooks`
    key is held to an allowlist too: a hook runs automatically when its event
    fires, with no prompt, so it is strictly more dangerous than a pre-approved
@@ -23,11 +23,17 @@ Checks:
 3. .agents/**/package.json — no npm/bun lifecycle scripts (preinstall,
    install, postinstall, prepare, prepack) and no trustedDependencies.
    Catches code execution smuggled into `bun install`.
+4. opencode.json — the opencode runtime's pre-approved bash permissions are
+   held to the same allowlist as .claude/settings.json (derived from it, so
+   the two cannot drift), and plugins / MCP servers in the config must be in
+   explicit allowlists. A plugin runs code in-process on every opencode
+   startup; an MCP server is an integration every fork session can call.
 
 Stdlib only. Exit 0 on success, 1 with a failure list otherwise.
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -141,6 +147,27 @@ ALLOWED_IGNORE_NEGATIONS = {
 # https://research.jfrog.com/post/shai-hulud-is-back-august/
 ALLOWED_HOOKS: set[str] = set()
 
+# The opencode pre-approved bash patterns are DERIVED from ALLOWED_PERMISSIONS
+# rather than maintained as a second list: every `Bash(<cmd>:*)` entry becomes
+# an opencode glob `<cmd>*`. Adding a permission means editing one allowlist
+# (this file) plus the two config files, and the derived-set equality check in
+# check_opencode_config() fails if opencode.json drifts from either.
+OPENCODE_ALLOWED_BASH: set[str] = {
+    f"{match.group(1)}*"
+    for entry in ALLOWED_PERMISSIONS
+    if (match := re.fullmatch(r"Bash\((.+):\*\)", entry))
+}
+
+# opencode plugins run arbitrary code in-process on every startup (and can
+# register tool hooks, which run without prompts) - the opencode equivalent of
+# the hook vector above. Empty by design.
+OPENCODE_ALLOWED_PLUGINS: set[str] = set()
+
+# Remote/local MCP servers committed to the template are integrations every
+# fork session can invoke. Adding one is intentionally a reviewed change: add
+# its name here in the same PR as the config entry.
+OPENCODE_ALLOWED_MCP_SERVERS: set[str] = set()
+
 FORBIDDEN_SCRIPTS = {"preinstall", "install", "postinstall", "prepare", "prepack"}
 
 
@@ -218,6 +245,72 @@ def check_permissions() -> None:
         # Not an error: settings may legitimately drop an entry. But an
         # allowlist entry that no longer exists should be pruned.
         print(f"note: allowlisted permission not present in settings.json: {entry!r}")
+
+
+def check_opencode_config() -> None:
+    """Audit opencode.json's pre-approved permissions, plugins, and MCP servers."""
+    path = ROOT / "opencode.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        errors.append(
+            f"opencode.json: unreadable: {exc}. The opencode runtime is part of this fork; "
+            "if it was removed intentionally, remove this check in the same PR."
+        )
+        return
+    except json.JSONDecodeError as exc:
+        errors.append(f"opencode.json: invalid JSON: {exc}")
+        return
+    if not isinstance(data, dict):
+        errors.append("opencode.json: top-level JSON value must be an object")
+        return
+
+    permission = data.get("permission", {})
+    if not isinstance(permission, dict):
+        errors.append("opencode.json: permission must be an object")
+        return
+    bash = permission.get("bash", {})
+    if not isinstance(bash, dict):
+        errors.append("opencode.json: permission.bash must be an object")
+        return
+    allowed = {pattern for pattern, action in bash.items() if action == "allow"}
+    for pattern in sorted(allowed):
+        if pattern not in OPENCODE_ALLOWED_BASH:
+            errors.append(
+                f"opencode.json: permission.bash allow entry not in the reviewed allowlist: "
+                f"{pattern!r}. Pre-approved bash patterns run without prompting on every fork. "
+                "If this entry is intentional, derive it from ALLOWED_PERMISSIONS in "
+                "tools/security_guards.py (or add it to OPENCODE_ALLOWED_BASH) in the same PR."
+            )
+    for pattern in sorted(OPENCODE_ALLOWED_BASH - allowed):
+        print(f"note: allowlisted opencode bash pattern not present in opencode.json: {pattern!r}")
+
+    plugins = data.get("plugin", data.get("plugins", []))
+    if not isinstance(plugins, list):
+        errors.append("opencode.json: plugin must be an array")
+    else:
+        for entry in plugins:
+            name = entry[0] if isinstance(entry, list) and entry else entry
+            if name not in OPENCODE_ALLOWED_PLUGINS:
+                errors.append(
+                    f"opencode.json: plugin not in the reviewed allowlist: {name!r}. A plugin "
+                    "runs code in-process on every opencode startup (and may register tool "
+                    "hooks, which run without prompts). If intentional, add it to "
+                    "OPENCODE_ALLOWED_PLUGINS in tools/security_guards.py in the same PR."
+                )
+
+    mcp = data.get("mcp", {})
+    if not isinstance(mcp, dict):
+        errors.append("opencode.json: mcp must be an object keyed by server name")
+    else:
+        for name in mcp:
+            if name not in OPENCODE_ALLOWED_MCP_SERVERS:
+                errors.append(
+                    f"opencode.json: MCP server not in the reviewed allowlist: {name!r}. A "
+                    "committed MCP server is an integration every fork session can invoke. If "
+                    "intentional, add its name to OPENCODE_ALLOWED_MCP_SERVERS in "
+                    "tools/security_guards.py in the same PR."
+                )
 
 
 def check_gitignore() -> None:
@@ -310,6 +403,7 @@ def check_tracked_node_modules() -> None:
 
 def main() -> int:
     check_permissions()
+    check_opencode_config()
     check_gitignore()
     check_package_manifests()
     check_tracked_node_modules()
@@ -319,7 +413,8 @@ def main() -> int:
             print(f"  - {err}")
         return 1
     print(
-        "security_guards: OK (permissions allowlist, hooks allowlist, gitignore rules, "
+        "security_guards: OK (Claude Code permissions allowlist, hooks allowlist, "
+        "opencode permissions/plugins/MCP allowlists, gitignore rules, "
         "package manifests, no tracked node_modules)"
     )
     return 0

@@ -43,12 +43,29 @@ class GuardRepoFixture(unittest.TestCase):
         self.gitignore = self.root / ".gitignore"
         self.write_gitignore(security_guards.REQUIRED_IGNORE_RULES)
 
+        self.opencode = self.root / "opencode.json"
+        self.write_opencode()
+
         self.manifest = self.root / ".agents" / "skills" / "example-search" / "cli" / "package.json"
         self.manifest.parent.mkdir(parents=True)
         self.write_manifest({"name": "example-cli", "scripts": {"start": "bun run src/cli.ts"}})
 
     def write_settings(self, allow):
         self.settings.write_text(json.dumps({"permissions": {"allow": list(allow)}}))
+
+    def write_opencode(self, data=None):
+        if data is None:
+            data = {
+                "$schema": "https://opencode.ai/config.json",
+                "instructions": ["CLAUDE.md"],
+                "permission": {
+                    "bash": {
+                        "*": "ask",
+                        **{p: "allow" for p in sorted(security_guards.OPENCODE_ALLOWED_BASH)},
+                    }
+                },
+            }
+        self.opencode.write_text(json.dumps(data))
 
     def write_gitignore(self, rules):
         self.gitignore.write_text("\n".join(rules) + "\n")
@@ -101,6 +118,96 @@ class PermissionGuardTests(GuardRepoFixture):
         ]:
             with self.subTest(data=data):
                 self.settings.write_text(json.dumps(data))
+                result = run_guards(self.root)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+
+
+class OpencodeGuardTests(GuardRepoFixture):
+    """opencode.json is held to the same reviewed-allowlist discipline as settings.json."""
+
+    def valid_opencode(self):
+        return {
+            "$schema": "https://opencode.ai/config.json",
+            "instructions": ["CLAUDE.md"],
+            "permission": {
+                "bash": {
+                    "*": "ask",
+                    **{p: "allow" for p in sorted(security_guards.OPENCODE_ALLOWED_BASH)},
+                }
+            },
+        }
+
+    def test_missing_opencode_json_fails(self):
+        self.opencode.unlink()
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("opencode.json: unreadable", result.stdout)
+
+    def test_invalid_opencode_json_fails(self):
+        self.opencode.write_text("{not json")
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("invalid JSON", result.stdout)
+
+    def test_wildcard_allow_bash_pattern_fails(self):
+        # `"*": "allow"` would pre-approve every shell command on every fork -
+        # the same widening the Claude Code guard rejects as Bash(*).
+        data = self.valid_opencode()
+        data["permission"]["bash"] = {"*": "allow"}
+        self.write_opencode(data)
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("not in the reviewed allowlist", result.stdout)
+        self.assertIn("'*'", result.stdout)
+
+    def test_unreviewed_allow_pattern_fails(self):
+        data = self.valid_opencode()
+        data["permission"]["bash"]["curl*"] = "allow"
+        self.write_opencode(data)
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("curl*", result.stdout)
+
+    def test_dropped_allowlisted_pattern_still_passes(self):
+        data = self.valid_opencode()
+        for pattern in list(data["permission"]["bash"]):
+            if pattern != "*":
+                del data["permission"]["bash"][pattern]
+                break
+        self.write_opencode(data)
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_plugin_entry_fails(self):
+        data = self.valid_opencode()
+        data["plugin"] = ["opencode-evil"]
+        self.write_opencode(data)
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("plugin not in the reviewed allowlist", result.stdout)
+        self.assertIn("opencode-evil", result.stdout)
+
+    def test_mcp_server_fails(self):
+        data = self.valid_opencode()
+        data["mcp"] = {"evil": {"type": "remote", "url": "https://evil.example/mcp"}}
+        self.write_opencode(data)
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("MCP server not in the reviewed allowlist", result.stdout)
+        self.assertIn("evil", result.stdout)
+
+    def test_malformed_opencode_shape_fails_cleanly(self):
+        for data, message in [
+            ([], "top-level JSON value must be an object"),
+            ({"permission": []}, "permission must be an object"),
+            ({"permission": {"bash": []}}, "permission.bash must be an object"),
+            ({"plugin": {}}, "plugin must be an array"),
+            ({"mcp": []}, "mcp must be an object"),
+        ]:
+            with self.subTest(data=data):
+                self.write_opencode(data)
                 result = run_guards(self.root)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(message, result.stdout)
